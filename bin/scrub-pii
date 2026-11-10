@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# scrub-pii — scan files (or stdin) for likely secrets and PII. Prints every match as
+# file:line and exits 1 if anything is found, 0 if clean. Use it as a pre-commit / CI
+# gate, or pipe text through it. Generic patterns only — no org-specific vocabulary.
+#
+# Usage:  scrub-pii [file ...]        # no args = read stdin
+#         git diff --cached | scrub-pii
+set -euo pipefail
+
+# name:regex — extended POSIX. Deliberately broad; tune to taste.
+patterns=(
+  'email:[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
+  'jwt:eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+'
+  'aws-akid:(AKIA|ASIA)[A-Z0-9]{16}'
+  'github-token:gh[pousr]_[A-Za-z0-9]{20,}'
+  'slack-token:xox[baprs]-[A-Za-z0-9-]{10,}'
+  'private-key:-----BEGIN [A-Z ]*PRIVATE KEY-----'
+  'bearer:[Bb]earer [A-Za-z0-9._-]{20,}'
+  'generic-secret:(password|passwd|secret|api[_-]?key|token)[[:space:]]*[:=][[:space:]]*[^[:space:]]{6,}'
+  'private-ip:(^|[^0-9])(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)[0-9]'
+)
+
+scan() { # label(file or "stdin"), content-file
+  local label="$1" f="$2" hit=0
+  for p in "${patterns[@]}"; do
+    local name="${p%%:*}" rx="${p#*:}"
+    while IFS=: read -r ln _; do
+      [ -n "$ln" ] && { printf '%s:%s [%s]\n' "$label" "$ln" "$name"; hit=1; }
+    done < <(grep -nEI "$rx" "$f" 2>/dev/null | cut -d: -f1 | sort -un | sed 's/$/:/')
+  done
+  return $hit
+}
+
+found=0
+if [ "$#" -eq 0 ]; then
+  tmp="$(mktemp)"; cat > "$tmp"; scan "stdin" "$tmp" || found=1; rm -f "$tmp"
+else
+  for f in "$@"; do [ -f "$f" ] || continue; scan "$f" "$f" || found=1; done
+fi
+
+[ "$found" -eq 0 ] && { echo "scrub-pii: clean" >&2; exit 0; }
+echo "scrub-pii: potential secrets/PII found (above)" >&2
+exit 1
