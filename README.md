@@ -28,3 +28,10 @@ scrub-pii src/**/*.ts
 npm i playwright && npx playwright install chromium
 node bin/proof-shot.mjs https://example.com "h1" out.png
 ```
+
+## Tests
+
+```bash
+brew install bats-core
+bats test/
+```
